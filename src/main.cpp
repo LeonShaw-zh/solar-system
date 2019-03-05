@@ -38,6 +38,8 @@ float v_earth_sun  = 0.1;
 float v_moon_earth = 1.2;
 float v_earth = 1.5;
 float v_moon  = 1.2;
+// 轮廓大小
+float contourSize = 1.1;
 
 int initialize();
 int initializeGLFW();
@@ -50,6 +52,7 @@ unsigned int loadTexture(const char* path);
 glm::mat4 myperspective(float fov, float W_H_rate, float n, float f);
 #define pi 3.1415926
 void calculatPosition();
+void drawSphere(Shader shader, glm::mat4 model, glm::mat4 view, glm::mat4 projection, Sphere sph);
 
 int main()
 {
@@ -67,6 +70,7 @@ int main()
     Shader lightShader("../src/shader/object.vs", "../src/shader/light.fs");
     lightShader.use();
     lightShader.setInt("material.texture_diffuse", 0);
+    Shader stencilShader("../src/shader/object.vs", "../src/shader/singlecolor.fs");
 
     Sphere sph;
 
@@ -75,32 +79,34 @@ int main()
     unsigned int sunTexture    = loadTexture("../src/tex/sunmap.jpg");
 
     glEnable(GL_DEPTH_TEST);
+    glEnable(GL_STENCIL_TEST);
+    glStencilMask(0xFF); // 允许写入
+    glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE); // 当深度测试和模板测试通过时设置模板缓冲
 
     while(!glfwWindowShouldClose(window)){
         processInput(window);
         glfwPollEvents();
         glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+
+        // 模板操作
+        glStencilFunc(GL_ALWAYS, 1, 0xFF);    // 总是通过模板测试
 
         // 生成观察矩阵和投影矩阵
-        glm::mat4 model = glm::mat4(1.0f);
         glm::mat4 view = glm::lookAt(position, sunPosition, up);
         glm::mat4 projection = myperspective(ZOOM, (float)screenWidth / screenHeight, 0.1f, 100.0f);
         glm::mat4 normalMat = glm::mat4(1.0f);
         // 太阳
         lightShader.use();
-        model = glm::rotate(model, (float)pi/2, glm::vec3(1,0,0));
-        model = glm::scale(model, glm::vec3(1.0)*sunSize);
-        lightShader.setMat4("model", model);
-        lightShader.setMat4("view", view);
-        lightShader.setMat4("projection", projection);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, sunTexture);
-        sph.draw();
-        // 地球和太阳
+        glm::mat4 sunmodel = glm::mat4(1.0f);
+        sunmodel = glm::rotate(sunmodel, (float)pi/2, glm::vec3(1,0,0));
+        sunmodel = glm::scale(sunmodel, glm::vec3(1.0)*sunSize);
+        drawSphere(lightShader, sunmodel, view, projection, sph);
+        
+        // 地球和月亮
         shader.use();
-        shader.setMat4("view", view);
-        shader.setMat4("projection", projection);
         // 光照
         shader.setVec3("ambientLight", glm::vec3(1.0f)*0.3f);
         shader.setVec3("pointLights[0].position", sunPosition);
@@ -109,32 +115,41 @@ int main()
         shader.setFloat("pointLights[0].linear",    0.09f);
         shader.setFloat("pointLights[0].quadratic", 0.032f);
         // 地球
-        float currentTime = glfwGetTime();
-        glm::vec3 earthPosition = glm::vec3(cos(currentTime*v_earth_sun),0.0,sin(currentTime*v_earth_sun))*sunToEarth;
-        model = glm::mat4(1.0f);
-        model = glm::translate(model, earthPosition);
-        model = glm::rotate(model, (float)glfwGetTime()*v_earth, glm::vec3(0,1,0));
-        model = glm::rotate(model, (float)pi/2, glm::vec3(1,0,0));
-        model = glm::scale(model, glm::vec3(1.0)*earthSize);
-        normalMat = glm::transpose(glm::inverse(model));
-        shader.setMat4("model", model);
-        shader.setMat4("normalMat", normalMat);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, earthTexture);
-        sph.draw();
+        float currentTime = glfwGetTime();
+        glm::vec3 earthPosition = glm::vec3(cos(currentTime*v_earth_sun),0.0,sin(currentTime*v_earth_sun))*sunToEarth;
+        glm::mat4 earthmodel = glm::mat4(1.0f);
+        earthmodel = glm::translate(earthmodel, earthPosition);
+        earthmodel = glm::rotate(earthmodel, (float)glfwGetTime()*v_earth, glm::vec3(0,1,0));
+        earthmodel = glm::rotate(earthmodel, (float)pi/2, glm::vec3(1,0,0));
+        earthmodel = glm::scale(earthmodel, glm::vec3(1.0)*earthSize);
+        drawSphere(shader, earthmodel, view, projection, sph);
         // 月球
-        glm::vec3 moonPosition = glm::vec3(cos(currentTime*v_moon_earth),0.0,sin(currentTime*v_moon_earth))*earthToMoon;
-        model = glm::mat4(1.0f);
-        model = glm::translate(model, earthPosition+moonPosition);
-        model = glm::rotate(model, (float)glfwGetTime()*v_moon, glm::vec3(0,1,0));
-        model = glm::rotate(model, (float)pi/2, glm::vec3(1,0,0));
-        model = glm::scale(model, glm::vec3(1.0)*moonSize);
-        normalMat = glm::transpose(glm::inverse(model));
-        shader.setMat4("model", model);
-        shader.setMat4("normalMat", normalMat);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, moonTexture);
-        sph.draw();
+        glm::vec3 moonPosition = glm::vec3(cos(currentTime*v_moon_earth),0.0,sin(currentTime*v_moon_earth))*earthToMoon;
+        glm::mat4 moonmodel = glm::mat4(1.0f);
+        moonmodel = glm::translate(moonmodel, earthPosition+moonPosition);
+        moonmodel = glm::rotate(moonmodel, (float)glfwGetTime()*v_moon, glm::vec3(0,1,0));
+        moonmodel = glm::rotate(moonmodel, (float)pi/2, glm::vec3(1,0,0));
+        moonmodel = glm::scale(moonmodel, glm::vec3(1.0)*moonSize);
+        drawSphere(shader, moonmodel, view, projection, sph);
+
+        // 绘制轮廓
+        glStencilMask(0x00);
+        glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
+        glDisable(GL_DEPTH_TEST);
+        stencilShader.use();
+        sunmodel = glm::scale(sunmodel, glm::vec3(1.0)*contourSize);
+        earthmodel = glm::scale(earthmodel, glm::vec3(1.0)*contourSize);
+        moonmodel = glm::scale(moonmodel, glm::vec3(1.0)*contourSize);
+        drawSphere(stencilShader, sunmodel, view, projection, sph);
+        drawSphere(stencilShader, earthmodel, view, projection, sph);
+        drawSphere(stencilShader, moonmodel, view, projection, sph);
+        glEnable(GL_DEPTH_TEST);
+        glStencilMask(0xFF);
+
         // 应用程序采用着双缓冲模式，一张在前面显示，一张在后面慢慢加载
         // Swap交换缓冲，完成立刻刷新
         glfwSwapBuffers(window);
@@ -221,7 +236,6 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height){
 }
 
 void mouse_callback(GLFWwindow* window, double xpos, double ypos){
-
 }
 
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset){
@@ -288,4 +302,13 @@ void calculatPosition(){
     position.x = tem * sin(glm::radians(u));
     position.y = radius * cos(glm::radians(v));
     position.z = tem * cos(glm::radians(u));
+}
+
+void drawSphere(Shader shader, glm::mat4 model, glm::mat4 view, glm::mat4 projection, Sphere sph){
+    glm::mat4 normalMat = glm::transpose(glm::inverse(model));
+    shader.setMat4("model", model);
+    shader.setMat4("normalMat", normalMat);
+    shader.setMat4("view", view);
+    shader.setMat4("projection", projection);
+    sph.draw();
 }
